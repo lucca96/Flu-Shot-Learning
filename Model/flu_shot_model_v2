@@ -1,0 +1,49 @@
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.multioutput import MultiOutputClassifier
+
+from sklearn.pipeline import Pipeline
+
+from sklearn.model_selection import train_test_split
+
+from sklearn.metrics import roc_curve, roc_auc_score
+
+RANDOM_SEED = 6 
+
+pd.set_option("display.max_columns", 100)
+
+DATA_PATH = Path.cwd().parent / "Flu-Shot-Learning" / "Data"
+
+features_df = pd.read_csv(
+    DATA_PATH / "training_set_features.csv",
+    index_col="respondent_id"
+)
+
+labels_df = pd.read_csv(
+    DATA_PATH / "training_set_labels.csv",
+    index_col="respondent_id"
+)
+
+joined_df = features_df.join(labels_df)
+
+def vaccination_rate_plot(col, target, data, ax=None):
+    counts = (joined_df[[target, col]]
+                  .groupby([target, col])
+                  .size()
+                  .unstack(target)
+             )
+    group_counts = counts.sum(axis='columns')
+    props = counts.div(group_counts, axis='index')
+
+    props.plot(kind="barh", stacked=True, ax=ax)
+    ax.invert_yaxis()
+    ax.legend().remove()
