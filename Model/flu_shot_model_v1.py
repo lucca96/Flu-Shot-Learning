@@ -4,21 +4,23 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from scikit-learn.preprocessing import StandardScaler
-from scikit-learn.impute import SimpleImputer
-from scikit-learn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
 
-from scikit-learn.linear_model import LogisticRegression
-from scikit-learn.multioutput import MultiOutputClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.multioutput import MultiOutputClassifier
 
-from scikit-learn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline
 
-from scikit-learn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split
 
-from scikit-learn.metrics import roc_curve, roc_auc_score
+from sklearn.metrics import roc_curve, roc_auc_score
 
 RANDOM_SEED = 6    # Set a random seed for reproducibility!
 
+
+# ---------- Loading the data ----------
 pd.set_option("display.max_columns", 100)
 
 DATA_PATH = Path.cwd().parent / "Flu-Shot-Learning" / "Data"
@@ -41,6 +43,8 @@ features_df.dtypes
 
 print("labels_df.shape", labels_df.shape)
 labels_df.head()
+
+# ---------- Exploring the data ----------
 
 np.testing.assert_array_equal(features_df.index.values, labels_df.index.values)
 
@@ -143,5 +147,115 @@ ax[0, 1].legend(
     loc='lower center', bbox_to_anchor=(0.5, 1.05), title='seasonal_vaccine'
 )
 fig.tight_layout()
+#plt.show()
 
-plt.show()
+# ---------- Building some models ----------
+
+numeric_cols = features_df.columns[features_df.dtypes != "object"].values
+
+print("numeric_cols", numeric_cols)
+
+# chain preprocessing into a Pipeline object
+# each step is a tuple of (name you chose, sklearn transformer)
+numeric_preprocessing_steps = Pipeline([
+    ('standard_scaler', StandardScaler()),
+    ('simple_imputer', SimpleImputer(strategy='median'))
+])
+
+# create the preprocessor stage of final pipeline
+# each entry in the transformer list is a tuple of
+# (name you choose, sklearn transformer, list of columns)
+preprocessor = ColumnTransformer(
+    transformers = [
+        ("numeric", numeric_preprocessing_steps, numeric_cols)
+    ],
+    remainder = "drop"
+)
+
+estimators = MultiOutputClassifier(
+    estimator=LogisticRegression(penalty="l2", C=1)
+)
+
+full_pipeline = Pipeline([
+    ("preprocessor", preprocessor),
+    ("estimators", estimators),
+])
+
+X_train, X_eval, y_train, y_eval = train_test_split(
+    features_df,
+    labels_df,
+    test_size=0.33,
+    shuffle=True,
+    stratify=labels_df,
+    random_state=RANDOM_SEED
+)
+
+full_pipeline.fit(X_train, y_train)
+
+# Predict on evaluation set
+# This competition wants probabilities, not labels
+preds = full_pipeline.predict_proba(X_eval)
+preds
+
+print("test_probas[0].shape", preds[0].shape)
+print("test_probas[1].shape", preds[1].shape)
+
+y_preds = pd.DataFrame(
+    {
+        "h1n1_vaccine": preds[0][:, 1],
+        "seasonal_vaccine": preds[1][:, 1],
+    },
+    index = y_eval.index
+)
+print("y_preds.shape:", y_preds.shape)
+y_preds.head()
+
+def plot_roc(y_true, y_score, label_name, ax):
+    fpr, tpr, thresholds = roc_curve(y_true, y_score)
+    ax.plot(fpr, tpr)
+    ax.plot([0, 1], [0, 1], color='grey', linestyle='--')
+    ax.set_ylabel('TPR')
+    ax.set_xlabel('FPR')
+    ax.set_title(
+        f"{label_name}: AUC = {roc_auc_score(y_true, y_score):.4f}"
+    )
+fig, ax = plt.subplots(1, 2, figsize=(7, 3.5))
+
+plot_roc(
+    y_eval['h1n1_vaccine'], 
+    y_preds['h1n1_vaccine'], 
+    'h1n1_vaccine',
+    ax=ax[0]
+)
+plot_roc(
+    y_eval['seasonal_vaccine'], 
+    y_preds['seasonal_vaccine'], 
+    'seasonal_vaccine',
+    ax=ax[1]
+)
+fig.tight_layout()
+
+#plt.show()
+
+roc_auc_score(y_eval, y_preds)
+
+full_pipeline.fit(features_df, labels_df)
+
+# ---------- Generating the predictions for the test set ----------
+
+test_features_df = pd.read_csv(DATA_PATH / "test_set_features.csv", index_col="respondent_id")
+test_probas = full_pipeline.predict_proba(test_features_df)
+test_probas
+
+test_features_df = pd.read_csv(DATA_PATH / "test_set_features.csv", index_col="respondent_id")
+test_probas = full_pipeline.predict_proba(test_features_df)
+
+submission_df = pd.read_csv(DATA_PATH / "submission_format.csv", index_col="respondent_id")
+
+np.testing.assert_array_equal(test_features_df.index.values, submission_df.index.values)
+
+# Save predictions to submission data frame
+submission_df["h1n1_vaccine"] = test_probas[0][:, 1]
+submission_df["seasonal_vaccine"] = test_probas[1][:, 1]
+
+submission_df.to_csv('my_submission.csv', index=True)
